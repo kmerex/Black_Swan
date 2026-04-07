@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Black Swan – Antigravity Lunar Ballet</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; touch-action: none; }
+
+        #intro-ui {
+            position: absolute; inset: 0;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            background: radial-gradient(circle at center, rgba(10,5,20,.92) 0%, #000 100%);
+            z-index: 100; transition: opacity 2.5s ease-out; color: #fff;
+            text-align: center; padding: 24px;
+        }
+        #intro-ui h1 {
+            font-size: clamp(2rem, 8vw, 4rem); letter-spacing: clamp(8px,4vw,20px);
+            font-weight: 200; text-shadow: 0 0 30px #d8b4fe; color: #f3e8ff; margin-bottom: 8px;
+        }
+        #intro-ui .sub {
+            font-size: clamp(.8rem, 3vw, 1.1rem); letter-spacing: clamp(3px,2vw,6px);
+            color: #c084fc; text-transform: uppercase; margin-bottom: 48px;
+        }
+        #start-btn {
+            padding: clamp(14px,3.5vw,18px) clamp(32px,8vw,52px);
+            font-size: clamp(1rem, 3.5vw, 1.15rem); letter-spacing: 5px;
+            background: transparent; color: #fff; border: 1px solid #d8b4fe;
+            border-radius: 50px; cursor: pointer; transition: all .4s;
+            box-shadow: 0 0 22px rgba(216,180,254,.25); min-height: 52px;
+            display: none;
+        }
+        #start-btn:hover { background: rgba(216,180,254,0.15); transform: translateY(-3px); }
+        #start-btn:active { background: #d8b4fe; color: #000; transform: scale(1.05); box-shadow: 0 0 50px rgba(216,180,254,.9); }
+        #loading-status {
+            position: absolute; bottom: 28px; width: 100%; text-align: center;
+            font-size: clamp(.75rem,2.5vw,.9rem); color: #888; letter-spacing: 2px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="intro-ui">
+    <h1>BLACK SWAN</h1>
+    <p class="sub">Levitación Cuántica y Danza Lunar</p>
+    <button id="start-btn">INICIAR EXPERIENCIA</button>
+    <div id="loading-status">Cargando 3D, galaxias y asteroides...</div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth < 768;
+const STAR_MULT  = isMobile ? 0.4 : 1;
+const DUST_COUNT = isMobile ? 500 : 1500;
+
+let isStarted = false;
+let mixer;
+let actions = [];
+let currentActionIdx = 0;
+let blendTimer = 0;
+const ANIM_DURATION = 9; // Intervalo de tiempo para cada movimiento (segundos)
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x020205);
+scene.fog = new THREE.FogExp2(0x020205, 0.015);
+
+// ARREGLO RESPONSIVE VERDADERO: 
+// Si la pantalla es VERTICAL (Celulares), el campo de visión se expande drásticamente (75) 
+// para que no se recorte a la bailarina por lo angosto de la pantalla. Si es apaisada (PC), a 45.
+const isPortrait = window.innerWidth < window.innerHeight;
+let camera = new THREE.PerspectiveCamera(isPortrait ? 75 : 45, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.set(0, 2, 25); // Cámara inicio
+let camTarget = new THREE.Vector3(0, 3, 0); // ¡ESTO FALTABA! El punto de efoque objetivo de la cámara
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+window.addEventListener('resize', () => {
+    const isPort = window.innerWidth < window.innerHeight;
+    camera.fov = isPort ? 75 : 45;
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enabled = false;
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.maxPolarAngle = Math.PI / 2 + 0.08;
+
+/* ─── AUDIO ─────────────────────────────────────────────────────── */
+let audioCtx, audioSource, audioBuffer, gainNode;
+
+async function initAudio() {
+    try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        gainNode = audioCtx.createGain();
+        gainNode.gain.value = 0.8;
+        gainNode.connect(audioCtx.destination);
+
+        const MP3_NAME = 'Swan lake Extended HD Version - tchaikovsky swan lake music.mp3';
+        const resp = await fetch(encodeURIComponent(MP3_NAME));
+        const buf = await resp.arrayBuffer();
+        audioBuffer = await audioCtx.decodeAudioData(buf);
+        
+        if (audioSource) try { audioSource.stop(); } catch(e){}
+        audioSource = audioCtx.createBufferSource();
+        audioSource.buffer = audioBuffer;
+        audioSource.loop = true;
+        audioSource.connect(gainNode);
+        audioSource.start(0);
+    } catch(e) {
+        console.warn('Audio no disponible:', e);
+    }
+}
+
+/* ─── 1. LUNA REALISTA CINEMATOGRÁFICA ────────────────────────────── */
+const textureLoader = new THREE.TextureLoader();
+// Texturas estándar de Three.js pero tratadas para máxima nitidez
+const moonMap = textureLoader.load('https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/moon_1024.jpg');
+const moonNormal = textureLoader.load('https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/moon_displacement.jpg');
+
+// Forzar la máxima nitidez posible soportada por tu tarjeta gráfica
+moonMap.anisotropy = renderer.capabilities.getMaxAnisotropy();
+moonMap.minFilter = THREE.LinearMipmapLinearFilter;
+
+// Reducimos el radio de la Luna a 18 para concentrar los pixeles de la textura 1024. 
+// Esto hace que la textura no se estire tanto, viéndose BASTANTE más nítida,
+// además de darle una curvatura más artística a la superficie bajo ella.
+const moonGeo = new THREE.SphereGeometry(18, 256, 256);
+const moonMat = new THREE.MeshStandardMaterial({
+    map: moonMap,
+    // Eliminamos el displacementMap porque generaba picos poligonales muy rudos (se veía como un videojuego viejo).
+    // Con solo bumpMap a alta resolución obtenemos porosidad perfecta a nivel de pixel sin deformar los vértices.
+    bumpMap: moonNormal,
+    bumpScale: 0.8,           // Relieve visual incrementado drásticamente para profundidad
+    roughness: 0.95,          // Casi sin brillo reflector (polvo lunar realista)
+    metalness: 0.05,
+    color: 0xeeeeee           // Ligero aclarado adicional para lucir espléndida
+});
+const moon = new THREE.Mesh(moonGeo, moonMat);
+// Radio = 18. Así que Y = -18 para asentar el plano firmemente. SIN displacement, no hay varianzas.
+moon.position.y = -18.0;
+moon.rotation.x = -Math.PI / 2;
+moon.receiveShadow = true;
+scene.add(moon);
+
+/* ─── FIRMA EN EL POLVO LUNAR "BELÉN" ───────────────────────── */
+function createSignatureText(text) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    
+    // Nada de fondo, solo las letras creando un relieve
+    ctx.shadowColor = 'rgba(0,0,0,0.8)'; // Falsa sombra para que parezca tener volumen sobre la roca blanca
+    ctx.shadowBlur = 6;
+    ctx.shadowOffsetX = 2;
+    ctx.shadowOffsetY = 3;
+
+    // Dorado muy pálido, para que no desentone agresivamente (es sutil)
+    const grad = ctx.createLinearGradient(0, 0, canvas.width, 0);
+    grad.addColorStop(0, '#c7a763'); 
+    grad.addColorStop(0.5, '#f5deb3');
+    grad.addColorStop(1, '#c7a763');
+
+    // Lista exhaustiva de fuentes tipo "Firma a Mano alzada" (Handwriting) para Windows, Mac, iOS y Android
+    ctx.font = 'italic 75px "Zapfino", "Segoe Script", "Pristina", "Freestyle Script", "Snell Roundhand", "SignPainter", cursive';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = grad;
+    
+    ctx.fillText(text, 256, 64);
+    
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    return texture;
+}
+
+const sigTexture = createSignatureText('Belén');
+// Proporción 4:1 (Ancho 1.5 metros, alto casi 40 cm en medidas virtuales) - Tamaño muy sutil
+const sigGeo = new THREE.PlaneGeometry(1.4, 0.35); 
+const sigMat = new THREE.MeshBasicMaterial({ 
+    map: sigTexture, 
+    transparent: true, 
+    depthTest: false, // Magia para evitar que se hunda o entierre en la curvatura de los polígonos de la luna
+    opacity: 0.8 // Opacidad al 80% para un look integrado a la tierra
+});
+const sigMesh = new THREE.Mesh(sigGeo, sigMat);
+
+// Posicionamos mucho más cerca del centro del escenario para que no caiga fuera de pantalla!
+// Al ponerlo en Z=0.5, queda justo a un lado de los pies de la bailarina, totalmente en el encuadre.
+sigMesh.position.set(1.5, 0.0, 0.5); 
+
+// Acostar la firma plana contra la tierra gélida
+sigMesh.rotation.x = -Math.PI / 2;
+// Como quien firma ligeramente torcido con orgullo
+sigMesh.rotation.z = -0.15; 
+
+scene.add(sigMesh);
+
+/* ─── 2. SISTEMA ESPACIAL (Fondo, Galaxias, Polvo) ──────────────── */
+const circleTex = textureLoader.load('https://threejs.org/examples/textures/sprites/circle.png');
+
+// 2A. Estrellas de Fondo
+const starGroup = new THREE.Group();
+[0.14, 0.26, 0.42].forEach((sz, j) => {
+    const count = Math.floor(350 * STAR_MULT / (j+1));
+    const pos = new Float32Array(count*3), col = new Float32Array(count*3);
+    for(let i=0; i<count*3; i+=3){
+        pos[i]=(Math.random()-.5)*380; pos[i+1]=Math.random()*220+14; pos[i+2]=(Math.random()-.5)*380;
+        const t=Math.random(), clr=new THREE.Color();
+        if(t>.82) clr.setHex(0xb0d5ff); else if(t>.62) clr.setHex(0xffe4b5); else clr.setHex(0xffffff);
+        clr.multiplyScalar(.5+Math.random()*.5);
+        col[i]=clr.r; col[i+1]=clr.g; col[i+2]=clr.b;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+    g.setAttribute('color', new THREE.BufferAttribute(col,3));
+    starGroup.add(new THREE.Points(g, new THREE.PointsMaterial({size:sz, map:circleTex, vertexColors:true, transparent:true, opacity:.9, depthWrite:false, blending:THREE.AdditiveBlending})));
+});
+scene.add(starGroup);
+
+// 2B. Galaxias
+function makeGalaxy(cx,cy,cz,radius,count,h1,h2){
+    const p=new Float32Array(count*3), col=new Float32Array(count*3), ca=new THREE.Color(h1), cb=new THREE.Color(h2);
+    for(let i=0;i<count*3;i+=3){ const r=Math.pow(Math.random(),2)*radius,th=Math.random()*Math.PI*2,ph=(Math.random()-.5)*.26; p[i]=cx+r*Math.cos(th)*Math.cos(ph); p[i+1]=cy+r*Math.sin(ph)*.4; p[i+2]=cz+r*Math.sin(th)*Math.cos(ph); const mx=Math.random(); col[i]=ca.r*mx+cb.r*(1-mx); col[i+1]=ca.g*mx+cb.g*(1-mx); col[i+2]=ca.b*mx+cb.b*(1-mx); }
+    const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(p,3)); g.setAttribute('color',new THREE.BufferAttribute(col,3));
+    return new THREE.Points(g, new THREE.PointsMaterial({size:.6,map:circleTex,vertexColors:true,transparent:true,opacity:.38,depthWrite:false,blending:THREE.AdditiveBlending}));
+}
+// GIGANTESCAS PARA QUE CUBRAN AMBOS LADOS (MÓVIL Y PC)
+// Ajustamos la galaxia derecha (azul) a X=70 y aumentamos su radio enormemente
+// para que no se escape de la cámara al hacer Zoom In.
+const galaxy1 = makeGalaxy(-80, 30, -120, 85, Math.floor(4500*STAR_MULT), 0xffccaa, 0xffffff); scene.add(galaxy1);
+const galaxy2 = makeGalaxy( 70, 26, -120, 85, Math.floor(4500*STAR_MULT), 0x88aaff, 0xffffff); scene.add(galaxy2);
+
+// 2C. Polvo de Antigravedad
+const dustPos = new Float32Array(DUST_COUNT*3), dustVel = [];
+for(let i=0; i<DUST_COUNT*3; i+=3){
+    dustPos[i]=(Math.random()-.5)*25; dustPos[i+1]=-.5; dustPos[i+2]=(Math.random()-.5)*25;
+    dustVel.push({y:.003+Math.random()*.007, x:(Math.random()-.5)*.012, z:(Math.random()-.5)*.012, o:Math.random()*Math.PI*2});
+}
+const dustGeo=new THREE.BufferGeometry(); dustGeo.setAttribute('position',new THREE.BufferAttribute(dustPos,3));
+const dustCloud=new THREE.Points(dustGeo,new THREE.PointsMaterial({size:.04,map:circleTex,color:0xd8b4fe,transparent:true,opacity:.4,depthWrite:false,blending:THREE.AdditiveBlending}));
+scene.add(dustCloud);
+
+/* ─── 3. ILUMINACIÓN CINEMATOGRÁFICA ────────────────────────────── */
+// Luz principal potente del sol espacial
+const sunLight = new THREE.DirectionalLight(0xffffff, 2.5);
+sunLight.position.set(25, 12, 18);
+sunLight.castShadow = true;
+sunLight.shadow.camera.top = 20;
+sunLight.shadow.camera.bottom = -20;
+sunLight.shadow.camera.left = -20;
+sunLight.shadow.camera.right = 20;
+sunLight.shadow.mapSize.set(2048, 2048);
+scene.add(sunLight);
+
+// Foco teatral dirigido exclusivamente a la bailarina para que se vea iluminada de frente 
+// pero sin sobreexponer (quemar o volver blancos) a los asteroides de fondo.
+const frontSpot = new THREE.DirectionalLight(0xffddcc, 1.8);
+frontSpot.position.set(0, 5, 20);
+scene.add(frontSpot);
+
+// Luz de contorno dramático (Rim light azulado)
+const earthGlow = new THREE.PointLight(0x6688ff, 6.0, 100);
+earthGlow.position.set(-30, 8, -30);
+scene.add(earthGlow);
+
+// Luz de ambiente tenue para mantener el espacio negro y misterioso
+scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+
+/* ─── ASTEROIDES Y ESTRELLAS FUGACES ────────────────────────────── */
+const shootingStars = [], asteroids = [];
+let ssTimer=0, astTimer=0;
+
+function spawnStar(){
+    // Aparecer en zonas mucho más cercanas y enfocadas al centro para que la niebla no las borre y se vean en móvil
+    const side = Math.random() > .5 ? 1 : -1;
+    const sx = side * (40 + Math.random() * 20); 
+    const sy = 15 + Math.random() * 30; // Más bajas
+    const sz = -30 - Math.random() * 30; // Mucho más cerca (pasaban por Z=-120 y la niebla se las comía)
+    
+    // Velocidad agresiva cruzando la pantalla
+    const vx = -side * (0.8 + Math.random() * 1.5); 
+    const vy = -(0.05 + Math.random() * .15); 
+    const tLen = 14 + Math.floor(Math.random() * 10);
+    
+    const positions = new Float32Array(tLen * 3);
+    for(let t=0; t<tLen; t++){
+        positions[t*3] = sx + vx*t*.08; 
+        positions[t*3+1] = sy + vy*t*.08; 
+        positions[t*3+2] = sz;
+    }
+    const geo = new THREE.BufferGeometry(); 
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    
+    // fog: false es CRÍTICO para que brillen mágicamente aunque estén lejos y la niebla sea densa
+    const mat = new THREE.LineBasicMaterial({
+        color: 0xffffff, 
+        transparent: true, 
+        blending: THREE.AdditiveBlending, 
+        depthWrite: false, 
+        fog: false  
+    });
+    const line = new THREE.Line(geo, mat);
+    scene.add(line);
+    shootingStars.push({line, geo, x:sx, y:sy, z:sz, vx, vy, tLen, life: 1, decay: .008 + Math.random() * .015});
+}
+
+function spawnAsteroid(){
+    // Geometría base: Dodecaedro nivel 2 (perfecto para rocas asimétricas 3D)
+    const baseR = 0.5 + Math.random() * 1.0;
+    const geo = new THREE.DodecahedronGeometry(baseR, 2);
+    
+    // Convertimos la esfera/dodecaedro en un bloque aplastado / elíptico (meteorito real)
+    geo.scale(1.0, 0.6 + Math.random() * 0.6, 0.6 + Math.random() * 0.8);
+    
+    // Deformación procedural continua (Craterización sin verse como "picos pinchudos")
+    const pos = geo.attributes.position;
+    for(let i=0; i<pos.count; i++) {
+        const px = pos.getX(i), py = pos.getY(i), pz = pos.getZ(i);
+        // Ruido matemático basado en la posición: crea hendiduras suaves y conectadas
+        const noise = 1 + (Math.sin(px * 4) * Math.cos(py * 4) + Math.sin(pz * 4)) * 0.1; 
+        pos.setXYZ(i, px * noise, py * noise, pz * noise);
+    }
+    pos.needsUpdate=true; 
+    geo.computeVertexNormals(); // Recalcula las normales para suavizar bordes
+
+    // Reutilizamos maravillosamente las texturas 4K de la NASA de la luna para texturizar al asteroide
+    const mat = new THREE.MeshStandardMaterial({
+        map: moonMap,
+        bumpMap: moonNormal,
+        bumpScale: 1.2, // Picos muy marcados a nivel de textura para darle brutalidad a la roca
+        roughness: 1.0,
+        metalness: 0.1
+    });
+    
+    // Variación sutil de color gris/marrón muy oscuro
+    mat.color.setHSL(0.05, 0.05, 0.15 + Math.random() * 0.05);
+
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    const side = Math.random() > .5 ? 1 : -1;
+    mesh.position.set(side * (62 + Math.random() * 30), Math.random() * 22 + 2, -22 - Math.random() * 55);
+    scene.add(mesh);
+    asteroids.push({mesh,vx:-side*(.05+Math.random()*.14),vy:(Math.random()-.5)*.022,vz:(Math.random()-.28)*.055,rx:(Math.random()-.5)*.035,ry:(Math.random()-.5)*.035});
+}
+// Regresamos a la cantidad original elegante (solo 5 flotando)
+for(let i=0;i<5;i++) spawnAsteroid();
+
+/* ─── 4. CARGA BAILARINA (MÚLTIPLES FBX Y ANIMACIONES) ───────────── */
+const ballerinaGroup = new THREE.Group();
+// Posición neutral inicial
+ballerinaGroup.position.y = 0;
+// GIRARLA 180° PARA QUE MIRE DE FRENTE A LA CÁMARA INICIALMENTE
+ballerinaGroup.rotation.y = Math.PI; 
+scene.add(ballerinaGroup);
+
+const fbxLoader = new FBXLoader();
+
+// 4.A) CARGAR EL MODELO PRINCIPAL (bailarina.fbx)
+fbxLoader.load('bailarina.fbx', (fbx) => {
+    fbx.scale.set(0.01, 0.01, 0.01);
+    fbx.position.set(0, 0, 0); 
+    
+    fbx.traverse(c => {
+        if(c.isMesh) {
+            c.castShadow = true;
+            c.receiveShadow = true;
+            
+            // FIX para cabellos y materiales de FBX Mixamo
+            if(c.material) {
+                const fixMaterial = (mat) => {
+                    mat.needsUpdate = true;
+                    mat.side = THREE.DoubleSide; 
+                    
+                    // MODO DEPURACIÓN EXTREMA: Forzamos a que ABSOLUTAMENTE TODO sea sólido.
+                    // Si el pelo existe físicamente como geometría en el archivo, se dibujará sí o sí.
+                    // Si sigue sin dibujarse tras esto, significa que el archivo bailarina.fbx fue exportado
+                    // estropeado desde origen y literalmente no contiene la malla 3D del pelo por dentro.
+                    mat.transparent = false;
+                    mat.opacity = 1.0;
+                    mat.alphaTest = 0;
+                    mat.depthWrite = true;
+                    mat.visible = true;
+                    
+                    // Modificar color del cabello a AZUL FUERTE (Caza ampliada de nombres)
+                    const n1 = (c.name || '').toLowerCase();
+                    const n2 = (mat.name || '').toLowerCase();
+                    if(n1.includes('hair') || n1.includes('pelo') || n1.includes('cabello') || n1.includes('head') || 
+                       n2.includes('hair') || n2.includes('pelo') || n2.includes('cabello') || n2.includes('mat_0')) {
+                        mat.color = new THREE.Color(0x0088ff); // Azul cian intenso
+                        mat.emissive = new THREE.Color(0x001144);
+                        mat.emissiveIntensity = 0.4;
+                        mat.roughness = 0.5; 
+                    }
+                };
+                if(Array.isArray(c.material)) c.material.forEach(fixMaterial);
+                else fixMaterial(c.material);
+            }
+            
+            // Zapatillas Emissives lilas
+            if(c.name.toLowerCase().includes('shoe') || c.name.toLowerCase().includes('zapatilla') || c.name.toLowerCase().includes('foot')) {
+                c.material = new THREE.MeshStandardMaterial({
+                    color: 0x4a148c,
+                    emissive: 0xd8b4fe,
+                    emissiveIntensity: 0.8,
+                    roughness: 0.4
+                });
+            }
+        }
+    });
+
+    ballerinaGroup.add(fbx);
+    mixer = new THREE.AnimationMixer(fbx);
+
+    // Guardar su animación nativa
+    if(fbx.animations && fbx.animations.length > 0) {
+        const action = mixer.clipAction(fbx.animations[0]);
+        action.play();
+        actions.push(action);
+    }
+
+    // 4.B) CARGAR ANIMACIONES EXTRA
+    // Se ha ampliado para cargar hasta 8 animaciones extra (anim1 a anim8)
+    const animFiles = [
+        'anim1.fbx', 'anim2.fbx', 'anim3.fbx', 'anim4.fbx',
+        'anim5.fbx', 'anim6.fbx', 'anim7.fbx', 'anim8.fbx'
+    ];
+    
+    animFiles.forEach(filename => {
+        fbxLoader.load(filename, (animFbx) => {
+            if(animFbx.animations && animFbx.animations.length > 0) {
+                // Solo nos importa la animación, ignoramos la malla (mesh)
+                const action = mixer.clipAction(animFbx.animations[0]);
+                actions.push(action);
+                console.log(`Animación extra (${filename}) cargada con éxito!`);
+            }
+        }, undefined, () => {}); // Si no existen, los omite de forma invisible
+    });
+
+    showReadyButton();
+}, (xhr) => {
+    const pct = Math.round(xhr.loaded / (xhr.total||1) * 100);
+    document.getElementById('loading-status').textContent = `Cargando Bailarina y Entorno… ${pct}%`;
+}, (err) => {
+    console.warn('Error cargando bailarina.fbx:', err);
+    document.getElementById('loading-status').textContent = 'Error leve, cargando el entorno...';
+    // Mostrar el botón de inicio independientemente de fallos para no bloquear al usuario
+    setTimeout(showReadyButton, 1500); 
+});
+
+function showReadyButton() {
+    document.getElementById('loading-status').style.display = 'none';
+    const btn = document.getElementById('start-btn');
+    btn.style.display = 'inline-block';
+    btn.style.opacity = '0';
+    btn.style.transform = 'translateY(20px)';
+    setTimeout(() => {
+        btn.style.transition = 'opacity 0.8s, transform 0.8s';
+        btn.style.opacity = '1';
+        btn.style.transform = 'translateY(0)';
+    }, 50);
+}
+
+// Respaldo por seguridad: mostrar botón a los 6 segundos de todas formas
+setTimeout(() => {
+    if(document.getElementById('start-btn').style.display === 'none') {
+        showReadyButton();
+    }
+}, 6000);
+
+/* ─── START & ANIMATION LOOP ────────────────────────────────────── */
+document.getElementById('start-btn').addEventListener('click', () => {
+    const ui = document.getElementById('intro-ui');
+    ui.style.transition = 'opacity 2.5s ease-out';
+    ui.style.opacity = '0';
+    setTimeout(() => { ui.style.display = 'none'; }, 2500);
+
+    // Iniciar Música SIN bloquear el resto usando await
+    initAudio(); 
+    isStarted = true;
+    controls.enabled = true;
+});
+
+const clock = new THREE.Clock();
+
+function animate() {
+    requestAnimationFrame(animate);
+    const dt = clock.getDelta();
+    const t = clock.getElapsedTime();
+
+    if(mixer) mixer.update(dt);
+
+    if(isStarted) {
+        // Mezclador multi-animaciones (Crossfade) suave
+        if(actions.length > 1) {
+            blendTimer += dt;
+            if(blendTimer >= ANIM_DURATION) {
+                blendTimer = 0;
+                const prevAction = actions[currentActionIdx];
+                currentActionIdx = (currentActionIdx + 1) % actions.length;
+                const nextAction = actions[currentActionIdx];
+                
+                // Evitamos el bug de choque brusco forzando la sincronización de pesos (Fade suave asíncrono)
+                nextAction.reset();
+                nextAction.setEffectiveTimeScale(1);
+                nextAction.setEffectiveWeight(1);
+                nextAction.play();
+                
+                // BUG FIX: Evitar que animaciones muy largas modifiquen la velocidad (time warping super rápido)
+                // al cruzarse con animaciones cortas usando "false" en el 3er parámetro (warp).
+                prevAction.crossFadeTo(nextAction, 2.5, false); 
+                console.log("Cambiando a movimiento " + (currentActionIdx + 1));
+            }
+        }
+
+        // CÁMARA INTIMA Y CERCANA
+        // Reducimos el targetZ drásticamente para estar más de frente a ella
+        const targetZ = window.innerWidth < 768 ? 9 : 5.5;
+        camera.position.lerp(new THREE.Vector3(0, 2.0, targetZ), 0.012);
+        // Enfoca hacia el centro de su cuerpo en lugar de mirar al cielo
+        camTarget.lerp(new THREE.Vector3(0, 1.4, 0), 0.025);
+        controls.target.copy(camTarget);
+
+        // FLOTACIÓN ANTIGRAVEDAD
+        // Al subir la base a 0.2, desenterramos los pies.
+        ballerinaGroup.position.y = 0.2 + Math.sin(t * 1.5) * 0.05;
+        // Rotación de ballet sutil
+        ballerinaGroup.rotation.y += 0.003;
+
+        // Animación de nubes
+        const dp = dustCloud.geometry.attributes.position.array;
+        for(let i=1;i<DUST_COUNT*3;i+=3) dp[i] = Math.max(-1, Math.min(6, dp[i] + Math.sin(t*2 + dp[i-1])*0.01));
+        dustCloud.geometry.attributes.position.needsUpdate = true;
+    }
+
+    // Rotación de las Galaxias
+    galaxy1.rotation.y += .00007; 
+    galaxy2.rotation.y -= .00004;
+
+    // Actualizar Estrellas Fugaces
+    ssTimer += dt;
+    if(ssTimer > 1.5 + Math.random()*3){ spawnStar(); ssTimer=0; }
+    for(let i=shootingStars.length-1; i>=0; i--){
+        const s=shootingStars[i]; s.life-=s.decay; s.x+=s.vx*dt*60; s.y+=s.vy*dt*60;
+        const arr=s.geo.attributes.position.array;
+        for(let tt=0;tt<s.tLen;tt++){ arr[tt*3]=s.x+s.vx*tt*.08; arr[tt*3+1]=s.y+s.vy*tt*.08; }
+        s.geo.attributes.position.needsUpdate=true; s.line.material.opacity=Math.max(0,s.life);
+        if(s.life<=0||Math.abs(s.x)>170){ scene.remove(s.line); s.geo.dispose(); shootingStars.splice(i,1); }
+    }
+
+    // Actualizar Asteroides
+    astTimer += dt;
+    if(astTimer > 10 + Math.random()*14){ spawnAsteroid(); astTimer=0; }
+    for(let i=asteroids.length-1; i>=0; i--){
+        const a=asteroids[i];
+        a.mesh.position.x+=a.vx*dt*60; a.mesh.position.y+=a.vy*dt*60; a.mesh.position.z+=a.vz*dt*60;
+        a.mesh.rotation.x+=a.rx; a.mesh.rotation.y+=a.ry;
+        if(Math.abs(a.mesh.position.x)>130||a.mesh.position.z>12){ scene.remove(a.mesh); asteroids.splice(i,1); }
+    }
+
+    controls.update();
+    renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight; 
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
